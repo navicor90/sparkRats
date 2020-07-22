@@ -1,32 +1,36 @@
 import java.sql.Timestamp
+
+import org.joda.time.DateTime
 import org.scalatest.flatspec.AnyFlatSpec
-import sparkApplication._
 
 class ApplicationUnitTests extends AnyFlatSpec with SparkSessionTestWrapper {
   val today = new Timestamp((new java.util.Date()).getTime)
   import spark.implicits._
 
-  it should "add meters correctly in getInfectedAreas" in {
-    val rats_list = List(Rat(1,33.13,-66.14,null,null,null),
-                         Rat(1,33.13,-66.14,today,null,null))
-    import spark.implicits._
+  it should "assign correctly tiles assignTiles method" in {
+    val rats_list = List(Rat(1,33.13,-66.155,null,null,null,null,null),
+                         Rat(2,33.14,-66.14,null,null,today,null,null))
     val ds = spark.createDataset(rats_list).as[Rat]
-    val areas = getInfectedAreas(ds,5)
-    val expectedResult = Area(33.129955084235796,33.13004491576421,-66.14005363504815,-66.13994636489697)
-    assert(areas.count()==1 && areas.first()==expectedResult)
+    val tr = new TileRats()
+    val ratsWithTiles = tr.assignTiles(ds, 1)
+    val expectedResult1 = Rat(1,33.13,-66.155,Some(0),Some(0),null,null,null)
+    val expectedResult2 = Rat(2,33.14,-66.14,Some(1113),Some(1670),today,null,null)
+    assert(ratsWithTiles.count()==2)
+    assert(ratsWithTiles.collect().apply(0) == expectedResult1)
+    assert(ratsWithTiles.collect().apply(1) == expectedResult2)
   }
 
-  it should "calculate correctly bound in getNewSick" in {
-    val rats_list = List(Rat(1,33.14,-66.15,null,null,null),
-                         Rat(2,33.139955084235790,-66.15,null,null,null),
-                         Rat(3,33.14,-66.13994636489696,null,null,null))
-
-    val areas_list = List(Area(33.139955084235796,33.14004491576421,-66.15005363504815,-66.14994636489697))
-
-    val ratsDs = spark.createDataset(rats_list).as[Rat]
-    val areasDs = spark.createDataset(areas_list).as[Area]
-    val newSick = getNewSick(ratsDs,areasDs,1)
-    val expectedResult = Rat(1,33.14,-66.15,null,null,null)
-    assert(newSick.count()==1 && newSick.first()==expectedResult)
+  it should "get the infected tiles from infected Rats" in {
+    val rats_list = List(Rat(1,33.13,-66.155,Some(0),Some(0),null,null,null),
+                         Rat(1,33.13,-66.1550005,Some(0),Some(5),null,null,null),
+                         Rat(2,33.14,-66.14,Some(1113),Some(1670),today,null,null))
+    val ds = spark.createDataset(rats_list).as[Rat]
+    val tr = new TileRats()
+    val infectedTiles = tr.getInfectedTiles(ds, 10)
+    val expectedTile = TileArea(1103,1123,1660,1680)
+    assert(infectedTiles.count()==1)
+    assert(infectedTiles.collect().apply(0)==expectedTile)
   }
+  
+
 }
