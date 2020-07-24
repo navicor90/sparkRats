@@ -32,12 +32,19 @@ object sparkApplicationTiles extends TileRats {
       .load("ratsData/*.csv").toDF()
 
     val rats = ratsFromDataframe(df)
-
+    println("rats")
+    spark.time(rats.show())
     val ratsWithTiles = assignTiles(rats=rats,tileMetersSize=1)
-    val infectedTiles = getInfectedTiles(ratsWithTiles, 10)
+    println("ratsWithTiles")
+    spark.time(ratsWithTiles.show())
     val newSick = getNewSick(rats = ratsWithTiles,
-                             infectedAreas = infectedTiles,
+                             infectionDistance = 10,
                              infectionProbability = 0.00005)
+    println("newSick")
+    spark.time(newSick.show())
+    val newSickWithRemovedDate = getDeadOrRecoveredRats(newSick,0.05)
+    println("newSickWithRemovedDate")
+    spark.time(newSickWithRemovedDate.show())
 
     println("============ New Sicks: ============")
     println(newSick.count())

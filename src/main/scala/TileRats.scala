@@ -1,10 +1,10 @@
 import java.sql.Timestamp
+import java.util.Calendar
 
 import org.apache.spark.sql
 import org.apache.spark.sql.{DataFrame, Dataset, Encoders}
-import org.apache.spark.sql.functions.{broadcast, col, lit, max, min, round}
-import sparkApplicationTiles.rat_encoder
-
+import org.apache.spark.sql.functions.{broadcast, col, lit, max, min, round, udf, rand, when}
+import org.apache.commons.math3.distribution.GammaDistribution
 import scala.util.Random
 
 case class Rat (id: Long,
@@ -57,24 +57,55 @@ class TileRats {
     return infectedAreas.as(tile_area_encoder)
   }
 
-  def getNewSick(rats:Dataset[Rat], infectedAreas:Dataset[TileArea], infectionProbability:Double) : Dataset[Rat] = {
+  def getNewSick(rats:Dataset[Rat],infectionDistance:Int, infectionProbability:Double, seed:Option[Int] = null) : Dataset[Rat] = {
+    val infectedAreas = getInfectedTiles(rats,infectionDistance)
+    val strSeed = if(seed!=null) seed.get.toString() else ""
+    val today = new Timestamp((new java.util.Date()).getTime)
     val x_restriction = col("ia.x_min") <= col("r.tile_x") &&
       col("ia.x_max") >= col("r.tile_x")
     val y_restriction = col("ia.y_min") <= col("r.tile_y") &&
       col("ia.y_max") >= col("r.tile_y")
     val newSick = rats.as("r")
-      .filter(s"infectedDate is null and rand() <= $infectionProbability")
+      .filter(s"infectedDate is null and rand($strSeed) <= $infectionProbability")
       .join(infectedAreas.as("ia"),
         x_restriction && y_restriction,
         "inner")
       .select(col("id")).distinct
       .join(rats,"id")
+      .withColumn("infectedDate", lit(today))
     return newSick.select("id","latitude","longitude",
       "tile_x","tile_y","infectedDate","deadDate", "recoveredDate").as(rat_encoder)
   }
 
-  def getDeadOrRecoveredRats(infectedRats:Dataset[Rat]) : Dataset[Rat] = {
-    return null
+
+
+  def getDeadOrRecoveredRats(infectedRats:Dataset[Rat], deadProbability:Double,seed:Option[Int]=null) : Dataset[Rat] = {
+    val gammaRecovered = new GammaDistribution(21.5, 1.2)
+    val gammaDeads = new GammaDistribution(18, 1)
+    var randF = rand()
+    if(seed!=null){
+      gammaRecovered.reseedRandomGenerator(seed.get)
+      gammaDeads.reseedRandomGenerator(seed.get)
+      randF = rand(seed.get)
+    }
+
+    val day_ms = 86400000
+    val today = new java.util.Date()
+    def randomDeadDate = () => {
+        new Timestamp(today.getTime()+Math.round(gammaDeads.sample*day_ms))
+    }
+    def randomRecoveredDate = () => {
+      new Timestamp(today.getTime()+Math.round(gammaRecovered.sample*day_ms))
+    }
+    val randomDeadDateUdf = udf(randomDeadDate)
+    val randomRecoveredDateUdf = udf(randomRecoveredDate)
+    //spark.udf.register("randGamma",randGamma)
+
+    infectedRats
+      .withColumn("isDead", when(randF <= deadProbability,1).otherwise(0))
+      .withColumn("deadDate" , when(col("isDead") === 1, randomDeadDateUdf()))
+      .withColumn("recoveredDate" , when(col("isDead") =!= 1, randomRecoveredDateUdf()))
+      .as(rat_encoder)
   }
 
   def randomLocationCloserTo(x0:Double, y0:Double, radius:Double): (Double,Double) = {
