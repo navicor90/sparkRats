@@ -9,6 +9,7 @@ import org.apache.spark.sql.{Dataset, SparkSession}
 import scala.util.Random
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
+import org.joda.time.DateTime
 import sparkApplicationDatasetGenerator.runDatasetCreation
 
 object sparkApplicationTiles extends TileRats {
@@ -32,15 +33,12 @@ object sparkApplicationTiles extends TileRats {
 
     runDatasetCreation(spark,100000,100)
     runSimulation(spark,allRatsParquet,initialInfectedRatsParquet)
-    Thread.sleep(60*1000) // wait for 60 seconds
-    runDatasetCreation(spark,100000,0)
-    runSimulation(spark,allRatsParquet,null)
-    Thread.sleep(60*1000) // wait for 60 seconds
-    runDatasetCreation(spark,100000,0)
-    runSimulation(spark,allRatsParquet,null)
-    Thread.sleep(60*1000) // wait for 60 seconds
-    runDatasetCreation(spark,100000,0)
-    runSimulation(spark,allRatsParquet,null)
+
+    for( i <- 1 to 5){
+      println("<<<< Iteration "+i+" >>>>")
+      Thread.sleep(60*1000) // wait for 60 seconds
+      runSimulation(spark,allRatsParquet,null)
+    }
   }
 
   def runSimulation(spark:SparkSession,allRatsParquet:String,initialInfectedRatsParquet:String) = {
@@ -101,8 +99,9 @@ object sparkApplicationTiles extends TileRats {
         .toDF()
         .join(ratsAll,"id")
 
-      val today = new Timestamp((new java.util.Date()).getTime)
-      infectedRats = addRemoveDate(ratsFromDataframe(infectedDf, tileMetersSize, today), 0.05)
+      val yesterday = new DateTime(new java.util.Date()).minusDays(1).toDate()
+      val sqlYesterday = new Timestamp(yesterday.getTime)
+      infectedRats = addRemoveDate(ratsFromDataframe(infectedDf, tileMetersSize, sqlYesterday), 0.05)
     }else{
       infectedRats = spark
         .read
@@ -154,7 +153,7 @@ object sparkApplicationTiles extends TileRats {
     .mode("overwrite")
     .parquet(s"export/$dateDir/border_info.parquet")
 
-    rats.union(infectedRats)
+    infectedRats
       .groupBy(date_format(col("infectedDate"),datePattern).as("dateRep"))
       .agg(count("*").as("qty_infected"))
       .coalesce(1)
