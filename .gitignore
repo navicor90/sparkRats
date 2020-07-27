@@ -2,4 +2,6 @@
 *.log
 *.idea
 target
-*.export
+dataSource/*
+export/*
+.ipynb_checkpoints/*
