@@ -29,14 +29,15 @@ object sparkApplicationTiles extends TileRats {
     val spark = SparkSession.builder().config(conf).getOrCreate()
     import spark.implicits._
     val sc = spark.sparkContext
-    Random.setSeed(3)
+    //Random.setSeed(3)
 
     runDatasetCreation(spark,100000,100)
     runSimulation(spark,allRatsParquet,initialInfectedRatsParquet)
 
-    for( i <- 1 to 5){
+    for( i <- 1 to 40){
       println("<<<< Iteration "+i+" >>>>")
       Thread.sleep(60*1000) // wait for 60 seconds
+      runDatasetCreation(spark,100000,0)
       runSimulation(spark,allRatsParquet,null)
     }
   }
