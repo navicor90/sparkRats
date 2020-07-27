@@ -16,29 +16,33 @@ object sparkApplicationDatasetGenerator extends TileRats {
     conf.setMaster("local[4]")
     conf.setAppName("Rats Application")
 
+    val totalRats = 100000
+    val infectedRats = 100
+
     Random.setSeed(3)
 
     val spark = SparkSession.builder().config(conf).getOrCreate()
     import spark.implicits._
     val sc = spark.sparkContext
-    def createData(n_total : Int,n_infected:Int, radius:Int) : DataFrame = {
-      val today = new Timestamp((new java.util.Date()).getTime)
+    def createData(n_total : Int, radius:Int) : DataFrame = {
       val df = sc.range(0,n_total).map(id => {
           val locs = randomLocationCloserTo(10,10,radius)
-          val infectedDate = if (id < n_infected) today else null
-          (id, locs._1, locs._2 ,infectedDate)
-        }).toDF("id","latitude","longitude","infectedDate")
+          (id, locs._1, locs._2 )
+        }).toDF("id","latitude","longitude")
       return df
     }
-    val df = createData(100000,1000,100)
-    df.coalesce(1)
+    val df = createData(totalRats,100)
+    df.filter(col("id") > infectedRats)
       .write
       .mode("overwrite")
       .option("header", "true")
-      .option("nullValue","")
-      .option("delimiter",",")
-      .csv("ratsData")
+      .parquet("dataSource/healthyRats.parquet")
 
+    df.filter(col("id")<=infectedRats)
+      .write
+      .mode("overwrite")
+      .option("header", "true")
+      .parquet("dataSource/infectedRats.parquet")
   }
 
 }

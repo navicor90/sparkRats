@@ -1,17 +1,17 @@
 import java.sql.Timestamp
-import java.util.Calendar
 
 import org.apache.spark.sql
 import org.apache.spark.sql.{DataFrame, Dataset, Encoders}
-import org.apache.spark.sql.functions.{broadcast, col, lit, max, min, round, udf, rand, when}
+import org.apache.spark.sql.functions.{broadcast, col, lit, max, min, rand, round, to_timestamp, udf, unix_timestamp, when}
 import org.apache.commons.math3.distribution.GammaDistribution
+
 import scala.util.Random
 
 case class Rat (id: Long,
                 latitude: Double,
                 longitude: Double,
-                tile_x: Option[Int],
-                tile_y: Option[Int],
+                tile_x: Int,
+                tile_y: Int,
                 infectedDate:Timestamp,
                 deadDate:Timestamp,
                 recoveredDate:Timestamp)
@@ -28,10 +28,10 @@ class TileRats {
   val rat_encoder = Encoders.product[Rat]
   val tile_area_encoder = Encoders.product[TileArea]
 
-  def assignTiles(rats: Dataset[Rat], tileMetersSize: Int) : Dataset[Rat] = {
+  def ratsFromDataframe(df : DataFrame, tileMetersSize: Int, infectedDate:Timestamp=null) : Dataset[Rat] = {
     val tileSize = (tileMetersSize / ((2 * PI / 360) * EARTH)) / 1000 //1 meter in degree
-    val ratsWithAgg = rats
-      .crossJoin(broadcast(rats.agg(
+
+    df.crossJoin(broadcast(df.agg(
         min("latitude") as "min_latitude",
         max("latitude") as "max_latitude",
         min("longitude") as "min_longitude",
@@ -40,14 +40,16 @@ class TileRats {
         .cast(sql.types.IntegerType))
       .withColumn("tile_y", round((col("longitude")-col("min_longitude"))/tileSize)
         .cast(sql.types.IntegerType))
-
-    return ratsWithAgg.select("id","latitude","longitude",
-        "tile_x","tile_y","infectedDate","deadDate", "recoveredDate").as(rat_encoder)
+      .withColumn("infectedDate",lit(infectedDate))
+      .withColumn("recoveredDate",lit(null))
+      .withColumn("deadDate",lit(null))
+      .select("id","latitude","longitude",
+        "tile_x","tile_y","infectedDate","deadDate", "recoveredDate")
+      .as(rat_encoder)
   }
 
   def getInfectedTiles(rats:Dataset[Rat], infectionDistance:Int) : Dataset[TileArea] = {
     val infectedAreas = rats
-      .filter("infectedDate is not null")
       .withColumn("x_min", col("tile_x") - lit(infectionDistance))
       .withColumn("x_max", col("tile_x") + lit(infectionDistance))
       .withColumn("y_min", col("tile_y") - lit(infectionDistance))
@@ -57,16 +59,19 @@ class TileRats {
     return infectedAreas.as(tile_area_encoder)
   }
 
-  def getNewSick(rats:Dataset[Rat],infectionDistance:Int, infectionProbability:Double, seed:Option[Int] = null) : Dataset[Rat] = {
-    val infectedAreas = getInfectedTiles(rats,infectionDistance)
+  def getNewInfected(rats:Dataset[Rat], infectedRats:Dataset[Rat],infectionDistance:Int, infectionProbability:Double, seed:Option[Int] = null) : Dataset[Rat] = {
+    val infectedAreas = getInfectedTiles(infectedRats,infectionDistance)
+
     val strSeed = if(seed!=null) seed.get.toString() else ""
     val today = new Timestamp((new java.util.Date()).getTime)
+
     val x_restriction = col("ia.x_min") <= col("r.tile_x") &&
       col("ia.x_max") >= col("r.tile_x")
     val y_restriction = col("ia.y_min") <= col("r.tile_y") &&
       col("ia.y_max") >= col("r.tile_y")
+
     val newSick = rats.as("r")
-      .filter(s"infectedDate is null and rand($strSeed) <= $infectionProbability")
+      .filter(s"rand($strSeed) <= $infectionProbability")
       .join(infectedAreas.as("ia"),
         x_restriction && y_restriction,
         "inner")
@@ -79,7 +84,7 @@ class TileRats {
 
 
 
-  def getDeadOrRecoveredRats(infectedRats:Dataset[Rat], deadProbability:Double,seed:Option[Int]=null) : Dataset[Rat] = {
+  def addRemoveDate(infectedRats:Dataset[Rat], deadProbability:Double,seed:Option[Int]=null) : Dataset[Rat] = {
     val gammaRecovered = new GammaDistribution(21.5, 1.2)
     val gammaDeads = new GammaDistribution(18, 1)
     var randF = rand()
@@ -89,24 +94,35 @@ class TileRats {
       randF = rand(seed.get)
     }
 
-    val day_ms = 86400000
-    val today = new java.util.Date()
+    val day_s = 86400
     def randomDeadDate = () => {
-        new Timestamp(today.getTime()+Math.round(gammaDeads.sample*day_ms))
+      gammaDeads.sample
     }
     def randomRecoveredDate = () => {
-      new Timestamp(today.getTime()+Math.round(gammaRecovered.sample*day_ms))
+      gammaRecovered.sample
     }
     val randomDeadDateUdf = udf(randomDeadDate)
     val randomRecoveredDateUdf = udf(randomRecoveredDate)
     //spark.udf.register("randGamma",randGamma)
-
+    //new Timestamp(today.getTime()+Math.round(gammaDeads.sample*day_ms))
+    val infectedUnixTime = unix_timestamp(col("infectedDate"),"yyyy-MM-dd HH:mm:ss.SSS")
     infectedRats
+      .withColumn("deadRandomMs", infectedUnixTime + (lit(day_s)*randomDeadDateUdf()))
+      .withColumn("recoveredRandomMs", infectedUnixTime + (lit(day_s)*randomRecoveredDateUdf()))
       .withColumn("isDead", when(randF <= deadProbability,1).otherwise(0))
-      .withColumn("deadDate" , when(col("isDead") === 1, randomDeadDateUdf()))
-      .withColumn("recoveredDate" , when(col("isDead") =!= 1, randomRecoveredDateUdf()))
+      .withColumn("deadDate" , when(col("isDead") === 1, to_timestamp(col("deadRandomMs"))))
+      .withColumn("recoveredDate" , when(col("isDead") =!= 1, to_timestamp(col("recoveredRandomMs"))))
       .as(rat_encoder)
   }
+
+  def updateRatsPosition(ratsOrigin:Dataset[Rat], ratsNewPosition:Dataset[Rat]):Dataset[Rat] = {
+    ratsOrigin.as("or")
+      .join(ratsNewPosition.as("new"), col("id"),"inner")
+      .select("or.id","new.latitude","new.longitude",
+        "new.tile_x","new.tile_y","or.infectedDate","or.deadDate", "or.recoveredDate")
+      .as(rat_encoder)
+  }
+
 
   def randomLocationCloserTo(x0:Double, y0:Double, radius:Double): (Double,Double) = {
     // Convert radius from meters to degrees

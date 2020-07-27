@@ -24,60 +24,58 @@ object sparkApplicationTiles extends TileRats {
     import spark.implicits._
     val sc = spark.sparkContext
 
-    val df = spark
+    val rats_df = spark
       .read
-      .format("csv")
+      .format("parquet")
       .option("header", "true")
-      .option("inferSchema", "true")
-      .load("ratsData/*.csv").toDF()
+      .load("dataSource/healthyRats.parquet/*.parquet").toDF()
 
-    val rats = ratsFromDataframe(df)
+    val infected_df = spark
+      .read
+      .format("parquet")
+      .option("header", "true")
+      .load("dataSource/infectedRats.parquet/*.parquet").toDF()
+
+    val tileMetersSize = 1
+    val rats = ratsFromDataframe(rats_df, tileMetersSize)
+
+    val today = new Timestamp((new java.util.Date()).getTime)
+    val infectedRats = addRemoveDate(ratsFromDataframe(infected_df, tileMetersSize, today), 0.05)
+
     println("rats")
     spark.time(rats.show())
-    val ratsWithTiles = assignTiles(rats=rats,tileMetersSize=1)
-    println("ratsWithTiles")
-    spark.time(ratsWithTiles.show())
-    val newSick = getNewSick(rats = ratsWithTiles,
+
+    val newInfected = getNewInfected(rats = rats,
+                             infectedRats = infectedRats,
                              infectionDistance = 10,
                              infectionProbability = 0.00005)
-    println("newSick")
-    spark.time(newSick.show())
-    val newSickWithRemovedDate = getDeadOrRecoveredRats(newSick,0.05)
-    println("newSickWithRemovedDate")
-    spark.time(newSickWithRemovedDate.show())
 
-    println("============ New Sicks: ============")
-    println(newSick.count())
-    println("====================================")
+    println("newInfected")
+    spark.time(newInfected.show())
+    val newInfectedWithRemovedDate = addRemoveDate(newInfected,0.05)
 
-    val tiles = ratsWithTiles.select("id","infectedDate","tile_x","tile_y").as("r")
-      .join(broadcast(newSick.select("id","infectedDate")).as("ns"), col("r.id")===col("ns.id"), "left")
-      .select($"r.tile_x",
-             $"r.tile_y",
-             when($"ns.infectedDate".isNotNull || $"r.infectedDate".isNotNull,lit(1))
-               .otherwise(0)
-               .as("isInfected"))
-        .groupBy("r.tile_x","r.tile_y")
-        .agg(sum("isInfected").as("infecteds"),count("*").as("totals"))
+    println("newSickWithRemoveDate")
+    spark.time(newInfectedWithRemovedDate.show())
 
-    val tilesDf = tiles.toDF()
-      //.withColumn("infectedDate", $"infectedDate".cast(sql.types.StringType))
-    tilesDf.coalesce(1)
-      .write
+    val infectedUnion = newInfectedWithRemovedDate
+      .union(infectedRats)
+
+    infectedUnion.write
       .mode("overwrite")
       .option("header", "true")
-      .option("nullValue","")
-      .option("delimiter",",")
-      .csv("sicks.export")
+      .parquet("dataSource/infectedUnion.parquet")
 
-  }
+    println("============ New Sicks: ============")
+    println(infectedUnion.count())
+    println("====================================")
 
-  def ratsFromDataframe(df : DataFrame) : Dataset[Rat] = {
-    df.withColumn("tile_x",lit(null))
-      .withColumn("tile_y",lit(null))
-      .withColumn("recoveredDate",lit(null))
-      .withColumn("deadDate",lit(null))
-      .as(rat_encoder)
+    infectedUnion.as("r")
+        .groupBy("r.tile_x","r.tile_y")
+        .agg(count("*").as("infected"))
+        .write
+        .mode("overwrite")
+        .parquet("export")
+
   }
 
 }
