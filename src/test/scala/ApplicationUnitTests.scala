@@ -1,8 +1,5 @@
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
-
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types.{DoubleType, IntegerType, StructField, StructType}
 import org.scalatest.flatspec.AnyFlatSpec
 
 import scala.util.Random
@@ -40,9 +37,12 @@ class ApplicationUnitTests extends AnyFlatSpec with SparkSessionTestWrapper {
   }
 
   it should "create infected Areas from infected Rats" in {
+    val someDay = new Timestamp(dateHourFormat.parse("2020-07-13 14").getTime)
+    val somePosteriorDay = new Timestamp(dateHourFormat.parse("2020-07-28 14").getTime)
+
     val tr = new TileRats()
-    val ds = Seq((1,33.13,-66.155,0,0,today,null,today),
-                 (2,33.14,-66.14,1113,1670,today,null,today))
+    val ds = Seq((1,33.13,-66.155,0,0,someDay,null,somePosteriorDay),
+                 (2,33.14,-66.14,1113,1670,someDay,null,somePosteriorDay))
       .toDF("id","latitude","longitude","tile_x","tile_y","infectedDate","deadDate","recoveredDate")
       .as(tr.rat_encoder)
 
@@ -58,6 +58,22 @@ class ApplicationUnitTests extends AnyFlatSpec with SparkSessionTestWrapper {
     assert(tile2.x_max==1117)
     assert(tile2.y_min==1666)
     assert(tile2.y_max==1674)
+  }
+
+  it should "create infected Areas avoiding dead rats" in {
+    val someDay = new Timestamp(dateHourFormat.parse("2020-07-13 14").getTime)
+    val somePosteriorDay = new Timestamp(dateHourFormat.parse("2020-07-28 14").getTime)
+    val somePreviousDay = new Timestamp(dateHourFormat.parse("2020-06-28 14").getTime)
+
+    val tr = new TileRats()
+    val ds = Seq((1,33.13,-66.155,0,0,someDay,null,somePosteriorDay),
+      (2,33.14,-66.14,1113,1670,someDay,null,somePosteriorDay),
+      (3,33.1390,-66.1490,1100,1300,someDay,null,somePreviousDay))
+      .toDF("id","latitude","longitude","tile_x","tile_y","infectedDate","deadDate","recoveredDate")
+      .as(tr.rat_encoder)
+
+    val infectedAreas = tr.getInfectedTiles(ds, 4)
+    assert(infectedAreas.count()==2)
   }
 
   it should "get new infected Rats from another ones(prob 0.4)" in {
