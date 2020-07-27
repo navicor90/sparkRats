@@ -4,4 +4,6 @@
 target
 dataSource/*
 export/*
-.ipynb_checkpoints/*
+.ipynb_checkpoints
+analytics/.ipynb_checkpoints
+analytics/venv

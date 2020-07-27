@@ -1,0 +1,6 @@
+requests
+jupyter
+pandas
+sklearn
+pyarrow
+matplotlib
