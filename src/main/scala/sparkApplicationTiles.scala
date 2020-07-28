@@ -10,7 +10,7 @@ import scala.util.Random
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
 import org.joda.time.DateTime
-import sparkApplicationDatasetGenerator.runDatasetCreation
+import datasetGenerator.runDatasetCreation
 
 object sparkApplicationTiles extends TileRats {
   val infectedUnionParquet = "dataSource/infectedUnion.parquet"
@@ -18,7 +18,7 @@ object sparkApplicationTiles extends TileRats {
   val dateFormat = new SimpleDateFormat(datePattern)
 
   def main(args:Array[String]): Unit = {
-    val allRatsParquet = "susceptibleRats"
+    val allRatsParquet = "allRats"
     var initialInfectedRatsParquet:String = "infectedRats"
 
     Logger.getLogger("org").setLevel(Level.OFF)
@@ -34,7 +34,7 @@ object sparkApplicationTiles extends TileRats {
     runDatasetCreation(spark,100000,100)
     runSimulation(spark,allRatsParquet,initialInfectedRatsParquet)
 
-    for( i <- 1 to 40){
+    for( i <- 1 to 200){
       println("<<<< Iteration "+i+" >>>>")
       Thread.sleep(60*1000) // wait for 60 seconds
       runDatasetCreation(spark,100000,0)
